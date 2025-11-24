@@ -12,7 +12,9 @@ MODULES_DIR = os.path.join(ROOT_DIR, "modules")
 # ----------------------------
 # Built-in constants / modules
 # ----------------------------
+variables = {}
 constants = {}
+
 # Load constants.wsmod if exists
 constants_path = os.path.join(MODULES_DIR, "constants.wsmod")
 if os.path.isfile(constants_path):
@@ -51,8 +53,6 @@ def browse_file():
 # ----------------------------
 # WS Execution Engine
 # ----------------------------
-variables = {}
-
 def run_ws_file(path):
     if not os.path.isfile(path):
         append_output(f"❌ File not found: {path}\n")
@@ -68,12 +68,14 @@ def run_ws_file(path):
         if not line or line.startswith("--"):
             continue  # skip empty or comment lines
 
-        # set variable: set a = 10
+        # ------------------------
+        # set variable: set a = 10;
         m = re.match(r'set\s+(\w+)\s*=\s*(.+)', line)
         if m:
             var, val = m.groups()
+            val = val.strip().rstrip(";")  # remove trailing semicolon
             try:
-                # replace constants
+                # replace constants in val
                 for k in constants:
                     val = val.replace(k, str(constants[k]))
                 variables[var] = eval(val, {}, variables)
@@ -81,16 +83,26 @@ def run_ws_file(path):
                 variables[var] = val.strip('"').strip("'")
             continue
 
-        # write: write("Hello")
+        # ------------------------
+        # write: write("Hello") or write(L"...")
         m = re.match(r'write\(L?"(.*)"\)', line)
         if m:
             text = m.group(1)
-            # replace [var] with value
-            text = re.sub(r'\[(\w+)\]', lambda x: str(variables.get(x.group(1), x.group(1))), text)
+
+            # Replace [expression] inside L-string with evaluated result
+            def eval_brackets(match):
+                expr = match.group(1).strip().rstrip(';')
+                try:
+                    return str(eval(expr, {}, variables))
+                except:
+                    return f"[{expr}]"
+
+            text = re.sub(r'\[(.*?)\]', eval_brackets, text)
             append_output(text + "\n")
             continue
 
-        # read: set a = read("Prompt")
+        # ------------------------
+        # read input: set a = read("Prompt")
         m = re.match(r'set\s+(\w+)\s*=\s*read\("(.*)"\)', line)
         if m:
             var, prompt = m.groups()
@@ -102,7 +114,8 @@ def run_ws_file(path):
                 variables[var] = ""
             continue
 
-        # TODO: add more WS syntax support (if, loops, etc.)
+        # ------------------------
+        # TODO: Add more WS syntax: if/else, loops, etc.
 
     append_output("\n✅ Script finished!\n")
 
