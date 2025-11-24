@@ -9,9 +9,6 @@ import re
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODULES_DIR = os.path.join(ROOT_DIR, "modules")
 
-# ----------------------------
-# Built-in constants / modules
-# ----------------------------
 variables = {}
 constants = {}
 
@@ -51,6 +48,25 @@ def browse_file():
         script_path_var.set(file_path)
 
 # ----------------------------
+# Boolean mapping
+# ----------------------------
+def map_booleans(expr):
+    expr = expr.replace("nor", "not (").replace("either", "(").replace("neither", "not (")
+    expr = expr.replace("true", "True").replace("false", "False")
+    return expr
+
+# ----------------------------
+# Evaluate L-string expressions
+# ----------------------------
+def eval_brackets(match):
+    expr = match.group(1).strip().rstrip(';')
+    expr = map_booleans(expr)
+    try:
+        return str(eval(expr, {}, variables))
+    except Exception:
+        return f"[{expr}]"
+
+# ----------------------------
 # WS Execution Engine
 # ----------------------------
 def run_ws_file(path):
@@ -59,63 +75,76 @@ def run_ws_file(path):
         return
 
     append_output(f"▶ Running: {path}\n\n")
-
     with open(path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("--"):
-            continue  # skip empty or comment lines
+    block_stack = []
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i].strip()
+        i += 1
+        if not raw_line or raw_line.startswith("--"):
+            continue
 
         # ------------------------
-        # set variable: set a = 10;
-        m = re.match(r'set\s+(\w+)\s*=\s*(.+)', line)
+        # set variable
+        m = re.match(r'set\s+(\w+)\s*=\s*(.+)', raw_line)
         if m:
             var, val = m.groups()
-            val = val.strip().rstrip(";")  # remove trailing semicolon
+            val = val.strip().rstrip(";")
             try:
-                # replace constants in val
                 for k in constants:
                     val = val.replace(k, str(constants[k]))
-                variables[var] = eval(val, {}, variables)
+                variables[var] = eval(map_booleans(val), {}, variables)
             except:
                 variables[var] = val.strip('"').strip("'")
             continue
 
         # ------------------------
-        # write: write("Hello") or write(L"...")
-        m = re.match(r'write\(L?"(.*)"\)', line)
+        # read input
+        m = re.match(r'set\s+(\w+)\s*=\s*read\("(.*)"\)', raw_line)
         if m:
-            text = m.group(1)
+            var, prompt = m.groups()
+            val = input(prompt)
+            variables[var] = val
+            append_output(f"{prompt}{val}\n")
+            continue
 
-            # Replace [expression] inside L-string with evaluated result
-            def eval_brackets(match):
-                expr = match.group(1).strip().rstrip(';')
-                try:
-                    return str(eval(expr, {}, variables))
-                except:
-                    return f"[{expr}]"
-
-            text = re.sub(r'\[(.*?)\]', eval_brackets, text)
+        # ------------------------
+        # write
+        m = re.match(r'write\(L?"(.*)"\)', raw_line)
+        if m:
+            text = re.sub(r'\[(.*?)\]', eval_brackets, m.group(1))
             append_output(text + "\n")
             continue
 
         # ------------------------
-        # read input: set a = read("Prompt")
-        m = re.match(r'set\s+(\w+)\s*=\s*read\("(.*)"\)', line)
-        if m:
-            var, prompt = m.groups()
-            try:
-                val = input(prompt)
-                variables[var] = val
-                append_output(f"{prompt}{val}\n")
-            except:
-                variables[var] = ""
+        # If / Else / Loops detection (basic)
+        # Simplified: store block info
+        # Here we can expand for full nested blocks, do-while, for-do, if-for, etc.
+        if re.match(r'if\s*\((.*)\)\s*{', raw_line):
+            condition = re.match(r'if\s*\((.*)\)\s*{', raw_line).group(1)
+            block_stack.append(("if", eval(map_booleans(condition), {}, variables)))
             continue
 
-        # ------------------------
-        # TODO: Add more WS syntax: if/else, loops, etc.
+        if raw_line.startswith("else"):
+            m_cond = re.match(r'else\((.*)\)\s*{', raw_line)
+            if m_cond:
+                condition = m_cond.group(1)
+                block_stack.append(("elseif", eval(map_booleans(condition), {}, variables)))
+            else:
+                block_stack.append(("else", True))
+            continue
+
+        if raw_line.startswith("while") or raw_line.startswith("do") or raw_line.startswith("for"):
+            # For now, mark loop start (full implementation needs nested stack and iteration)
+            block_stack.append(("loop", raw_line))
+            continue
+
+        if raw_line == "}":
+            if block_stack:
+                block_stack.pop()
+            continue
 
     append_output("\n✅ Script finished!\n")
 
@@ -127,11 +156,10 @@ def run_button_action():
 # Tkinter GUI
 # ----------------------------
 root = tk.Tk()
-root.title("WevScript Console (Heart)")
-root.geometry("800x600")
+root.title("🔥 WevScript Console (Heart)")
+root.geometry("1000x700")
 root.resizable(True, True)
 
-# Path input
 script_path_var = tk.StringVar()
 path_frame = tk.Frame(root)
 path_frame.pack(fill='x', padx=5, pady=5)
@@ -148,7 +176,6 @@ run_button.pack(side='left', padx=(0,5))
 clear_button = tk.Button(path_frame, text="Clear Output", command=clear_output)
 clear_button.pack(side='left')
 
-# Output console
 output_box = scrolledtext.ScrolledText(root, font=("Consolas", 12), state='disabled', bg="black", fg="white")
 output_box.pack(fill='both', expand=True, padx=5, pady=(0,5))
 
